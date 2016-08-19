@@ -206,18 +206,39 @@ define([
         var batchTableResources = new Cesium3DTileBatchTableResources(this, batchLength);
         this.batchTableResources = batchTableResources;
 
-        var batchTableByteLength = view.getUint32(byteOffset, true);
+        var batchTableJsonByteLength = view.getUint32(byteOffset, true);
         byteOffset += sizeOfUint32;
-        if (batchTableByteLength > 0) {
-            var batchTableString = getStringFromTypedArray(uint8Array, byteOffset, batchTableByteLength);
-            byteOffset += batchTableByteLength;
 
+        var batchTableBinaryByteLength = view.getUint32(byteOffset, true);
+        byteOffset += sizeOfUint32;
+
+        // TODO : remove this legacy check before merging into master
+        // Check if the header contains 'batchTableBinaryByteLength' or not.
+        // If batchTableBinaryByteLength is missing, then the value will either be the start of the JSON string ( "{ ) or the glTF magic.
+        // When treated as a uint32, this value will be a large number like 1179937895 or 1684611707 (1 GB) which is expected to exceed the byteLength of the tile.
+        if (batchTableBinaryByteLength > byteLength) {
+            batchTableBinaryByteLength = 0;
+            byteOffset -= sizeOfUint32;
+        }
+
+        if (batchTableJsonByteLength > 0) {
             // PERFORMANCE_IDEA: is it possible to allocate this on-demand?  Perhaps keep the
             // arraybuffer/string compressed in memory and then decompress it when it is first accessed.
             //
             // We could also make another request for it, but that would make the property set/get
             // API async, and would double the number of numbers in some cases.
-            batchTableResources.batchTable = JSON.parse(batchTableString);
+            var batchTableString = getStringFromTypedArray(uint8Array, byteOffset, batchTableJsonByteLength);
+            var batchTableJson = JSON.parse(batchTableString);
+            console.log(batchTableJson);
+            byteOffset += batchTableJsonByteLength;
+
+            var batchTableBinary;
+            if (batchTableBinaryByteLength > 0) {
+                // Has a batch table binary
+                batchTableBinary = new Uint8Array(arrayBuffer, byteOffset, batchTableBinaryByteLength);
+                byteOffset += batchTableBinaryByteLength;
+            }
+            batchTableResources.setBatchTable(batchTableJson, batchTableBinary);
         }
 
         var gltfByteLength = byteStart + byteLength - byteOffset;

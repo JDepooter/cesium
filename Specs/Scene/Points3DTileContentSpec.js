@@ -2,12 +2,14 @@
 defineSuite([
         'Scene/Points3DTileContent',
         'Core/Cartesian3',
+        'Core/Color',
         'Core/HeadingPitchRange',
         'Specs/Cesium3DTilesTester',
         'Specs/createScene'
     ], function(
         Points3DTileContent,
         Cartesian3,
+        Color,
         HeadingPitchRange,
         Cesium3DTilesTester,
         createScene) {
@@ -26,6 +28,7 @@ defineSuite([
     var pointsQuantizedUrl = './Data/Cesium3DTiles/Points/PointsQuantized';
     var pointsQuantizedOctEncodedUrl = './Data/Cesium3DTiles/Points/PointsQuantizedOctEncoded';
     var pointsWGS84Url = './Data/Cesium3DTiles/Points/PointsWGS84';
+    var pointsWithBatchTableUrl = './Data/Cesium3DTiles/Points/PointsWithBatchTable';
 
     beforeAll(function() {
         // Point tiles use RTC, which for now requires scene3DOnly to be true
@@ -168,6 +171,10 @@ defineSuite([
         return Cesium3DTilesTester.loadTileset(scene, pointsWGS84Url).then(expectRenderPoints);
     });
 
+    it('renders points with batch table', function() {
+        return Cesium3DTilesTester.loadTileset(scene, pointsWithBatchTableUrl).then(expectRenderPoints);
+    });
+
     it('renders with debug color', function() {
         return Cesium3DTilesTester.loadTileset(scene, pointsRGBUrl).then(function(tileset) {
             var color = expectRenderPoints(tileset);
@@ -190,6 +197,26 @@ defineSuite([
             picked = scene.pickForSpecs();
             expect(picked).toBeDefined();
             expect(picked.primitive).toBe(content);
+        });
+    });
+
+    it('picks a feature in the point cloud', function() {
+        return Cesium3DTilesTester.loadTileset(scene, pointsWithBatchTableUrl).then(function(tileset) {
+            var pixelColor = scene.renderForSpecs();
+
+            // Change the color of the picked feature to yellow
+            var picked = scene.pickForSpecs();
+            expect(picked).toBeDefined();
+            picked.color = Color.clone(Color.YELLOW, picked.color);
+
+            // Expect the pixel color to be some shade of yellow
+            var newPixelColor = scene.renderForSpecs();
+            expect(newPixelColor).not.toEqual(pixelColor);
+
+            // Turn show off. Expect a different feature to get picked.
+            picked.show = false;
+            var newPicked = scene.pickForSpecs();
+            expect(newPicked).not.toBe(picked);
         });
     });
 

@@ -154,7 +154,7 @@ define([
      * Part of the {@link Cesium3DTileContent} interface.
      */
     Instanced3DModel3DTileContent.prototype.getFeature = function(batchId) {
-        var featuresLength = this._modelInstanceCollection.length;
+        var featuresLength = this.featuresLength;
         //>>includeStart('debug', pragmas.debug);
         if (!defined(batchId) || (batchId < 0) || (batchId >= featuresLength)) {
             throw new DeveloperError('batchId is required and between zero and featuresLength - 1 (' + (featuresLength - 1) + ').');
@@ -282,12 +282,17 @@ define([
             this.batchTableResources = batchTableResources;
             if (batchTableJSONByteLength > 0) {
                 var batchTableString = getStringFromTypedArray(uint8Array, byteOffset, batchTableJSONByteLength);
-                batchTableResources.batchTable = JSON.parse(batchTableString);
+                var batchTableJson = JSON.parse(batchTableString);
                 byteOffset += batchTableJSONByteLength;
-            }
 
-            // TODO: Right now batchTableResources doesn't support binary
-            byteOffset += batchTableBinaryByteLength;
+                var batchTableBinary;
+                if (batchTableBinaryByteLength > 0) {
+                    // Has a batch table binary
+                    batchTableBinary = new Uint8Array(arrayBuffer, byteOffset, batchTableBinaryByteLength);
+                    byteOffset += batchTableBinaryByteLength;
+                }
+                batchTableResources.setBatchTable(batchTableJson, batchTableBinary);
+            }
 
             var gltfView = new Uint8Array(arrayBuffer, byteOffset, gltfByteLength);
             byteOffset += gltfByteLength;

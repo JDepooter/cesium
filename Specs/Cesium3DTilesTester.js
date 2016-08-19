@@ -64,7 +64,7 @@ define([
         // Verify render before being picked
         expectRender(scene, tileset);
 
-        // Change the color of the picked instance to yellow
+        // Change the color of the picked feature to yellow
         var picked = scene.pickForSpecs();
         expect(picked).toBeDefined();
         picked.color = Color.clone(Color.YELLOW, picked.color);
@@ -193,7 +193,7 @@ define([
         var version = defaultValue(options.version, 1);
         var featuresLength = defaultValue(options.featuresLength, 1);
 
-        var headerByteLength = 20;
+        var headerByteLength = 24;
         var byteLength = headerByteLength;
         var buffer = new ArrayBuffer(byteLength);
         var view = new DataView(buffer);
@@ -203,8 +203,9 @@ define([
         view.setUint8(3, magic[3]);
         view.setUint32(4, version, true);          // version
         view.setUint32(8, byteLength, true);       // byteLength
-        view.setUint32(12, featuresLength, true);  // featuresLength
-        view.setUint32(16, 0, true);               // batchTableByteLength
+        view.setUint32(12, featuresLength, true);  // batchLength
+        view.setUint32(16, 0, true);               // batchTableJsonByteLength
+        view.setUint32(20, 0, true);               // batchTableBinaryByteLength
 
         return buffer;
     };
@@ -280,7 +281,7 @@ define([
         var featureTableBinary = new ArrayBuffer(12); // Enough space to hold 3 floats
         var featureTableBinaryByteLength = featureTableBinary.byteLength;
 
-        var headerByteLength = 20;
+        var headerByteLength = 28;
         var byteLength = headerByteLength + featureTableJSONByteLength + featureTableBinaryByteLength;
         var buffer = new ArrayBuffer(byteLength);
         var view = new DataView(buffer);
@@ -292,6 +293,8 @@ define([
         view.setUint32(8, byteLength, true);                    // byteLength
         view.setUint32(12, featureTableJSONByteLength, true);   // featureTableJSONByteLength
         view.setUint32(16, featureTableBinaryByteLength, true); // featureTableBinaryByteLength
+        view.setUint32(20, 0, true);                            // batchTableJSONByteLength
+        view.setUint32(24, 0, true);                            // batchTableBinaryByteLength
 
         var i;
         var byteOffset = headerByteLength;

@@ -28,7 +28,9 @@ define([
         '../Renderer/WebGLConstants',
         '../ThirdParty/when',
         './BlendingState',
+        './Cesium3DTileBatchTableResources',
         './Cesium3DTileContentState',
+        './Cesium3DTileFeature',
         './Cesium3DTileFeatureTableResources',
         './Pass'
     ], function(
@@ -60,7 +62,9 @@ define([
         WebGLConstants,
         when,
         BlendingState,
+        Cesium3DTileBatchTableResources,
         Cesium3DTileContentState,
+        Cesium3DTileFeature,
         Cesium3DTileFeatureTableResources,
         Pass) {
     'use strict';
@@ -85,7 +89,7 @@ define([
 
         this._drawCommand = undefined;
         this._pickCommand = undefined;
-        this._pickId = undefined;
+        this._pickId = undefined; // Only defined when batchTableResources is undefined
         this._isTranslucent = false;
         this._constantColor = Color.clone(Color.WHITE);
         this._rtcCenter = undefined;
@@ -107,6 +111,7 @@ define([
 
         this._contentReadyToProcessPromise = when.defer();
         this._readyPromise = when.defer();
+        this._features = undefined;
     }
 
     defineProperties(Points3DTileContent.prototype, {
@@ -115,7 +120,9 @@ define([
          */
         featuresLength : {
             get : function() {
-                // TODO: implement batchTable for pnts tile format
+                if (defined(this.batchTableResources)) {
+                    return this.batchTableResources.featuresLength;
+                }
                 return 0;
             }
         },
@@ -148,11 +155,25 @@ define([
         }
     });
 
+    function createFeatures(content) {
+        var tileset = content._tileset;
+        var featuresLength = content.featuresLength;
+        if (!defined(content._features) && (featuresLength > 0)) {
+            var features = new Array(featuresLength);
+            for (var i = 0; i < featuresLength; ++i) {
+                features[i] = new Cesium3DTileFeature(tileset, content, i);
+            }
+            content._features = features;
+        }
+    }
+
     /**
      * Part of the {@link Cesium3DTileContent} interface.
      */
     Points3DTileContent.prototype.hasProperty = function(name) {
-        // TODO: implement batchTable for pnts tile format
+        if (defined(this.batchTableResources)) {
+            return this.batchTableResources.hasProperty(name);
+        }
         return false;
     };
 
@@ -160,7 +181,16 @@ define([
      * Part of the {@link Cesium3DTileContent} interface.
      */
     Points3DTileContent.prototype.getFeature = function(batchId) {
-        // TODO: implement batchTable for pnts tile format
+        if (defined(this.batchTableResources)) {
+            var featuresLength = this.featuresLength;
+            //>>includeStart('debug', pragmas.debug);
+            if (!defined(batchId) || (batchId < 0) || (batchId >= featuresLength)) {
+                throw new DeveloperError('batchId is required and between zero and featuresLength - 1 (' + (featuresLength - 1) + ').');
+            }
+            //>>includeEnd('debug');
+            createFeatures(this);
+            return this._features[batchId];
+        }
         return undefined;
     };
 
@@ -233,6 +263,11 @@ define([
         byteOffset += sizeOfUint32;
 
         var featureTableBinaryByteLength = view.getUint32(byteOffset, true);
+        byteOffset += sizeOfUint32;
+
+        var batchTableJSONByteLength = view.getUint32(byteOffset, true);
+        byteOffset += sizeOfUint32;
+        var batchTableBinaryByteLength = view.getUint32(byteOffset, true);
         byteOffset += sizeOfUint32;
 
         var featureTableString = getStringFromTypedArray(uint8Array, byteOffset, featureTableJSONByteLength);
@@ -320,11 +355,51 @@ define([
             isOctEncoded16P = true;
         }
 
+        // Get the batchIds and batch table
+        var batchIds;
+        if (defined(featureTableJSON.BATCH_ID)) {
+            var componentType;
+            var componentTypeName = featureTableJSON.BATCH_ID.componentType;
+            if (defined(componentTypeName)) {
+                componentType = ComponentDatatype.fromName(componentTypeName);
+            } else {
+                componentType = ComponentDatatype.UNSIGNED_SHORT;
+            }
+
+            batchIds = featureTableResources.getPropertyArray('BATCH_ID', componentType, 1);
+
+            var batchLength = featureTableResources.getGlobalProperty('BATCH_LENGTH');
+            //>>includeStart('debug', pragmas.debug);
+            if (!defined(batchLength)) {
+                throw new DeveloperError('Global property: BATCH_LENGTH must be defined when BATCH_ID is defined.');
+            }
+            //>>includeEnd('debug');
+
+            var batchTableResources = new Cesium3DTileBatchTableResources(this, batchLength);
+            this.batchTableResources = batchTableResources;
+
+            if (batchTableJSONByteLength > 0) {
+                // Has a batch table JSON
+                var batchTableString = getStringFromTypedArray(uint8Array, byteOffset, batchTableJSONByteLength);
+                var batchTableJSON = JSON.parse(batchTableString);
+                byteOffset += batchTableJSONByteLength;
+
+                var batchTableBinary;
+                if (batchTableBinaryByteLength > 0) {
+                    // Has a batch table binary
+                    batchTableBinary = new Uint8Array(arrayBuffer, byteOffset, batchTableBinaryByteLength);
+                    byteOffset += batchTableBinaryByteLength;
+                }
+                batchTableResources.setBatchTable(batchTableJSON, batchTableBinary);
+            }
+        }
+
         this._parsedContent = {
             pointsLength : pointsLength,
             positions : positions,
             colors : colors,
             normals : normals,
+            batchIds : batchIds,
             isQuantized : isQuantized,
             isOctEncoded16P : isOctEncoded16P
         };
@@ -340,12 +415,16 @@ define([
         var positions = parsedContent.positions;
         var colors = parsedContent.colors;
         var normals = parsedContent.normals;
+        var batchIds = parsedContent.batchIds;
         var isQuantized = parsedContent.isQuantized;
         var isOctEncoded16P = parsedContent.isOctEncoded16P;
         var isTranslucent = content._isTranslucent;
 
         var hasColors = defined(colors);
         var hasNormals = defined(normals);
+        var hasBatchIds = defined(batchIds);
+
+        var batchTableResources = content.batchTableResources;
 
         var vs = 'attribute vec3 a_position; \n' +
                  'varying vec4 v_color; \n' +
@@ -365,6 +444,10 @@ define([
             } else {
                 vs += 'attribute vec3 a_normal; \n';
             }
+        }
+
+        if (hasBatchIds) {
+            vs += 'attribute float a_batchId; \n';
         }
 
         if (isQuantized) {
@@ -455,9 +538,19 @@ define([
             });
         }
 
+        var batchIdsVertexBuffer;
+        if (hasBatchIds) {
+            batchIdsVertexBuffer = Buffer.createVertexBuffer({
+                context : context,
+                typedArray : batchIds,
+                usage : BufferUsage.STATIC_DRAW
+            });
+        }
+
         var positionAttributeLocation = 0;
         var colorAttributeLocation = 1;
         var normalAttributeLocation = 2;
+        var batchIdAttributeLocation = 3;
 
         var attributes = [];
         if (isQuantized) {
@@ -519,6 +612,18 @@ define([
             }
         }
 
+        if (hasBatchIds) {
+            attributes.push({
+                index : batchIdAttributeLocation,
+                vertexBuffer : batchIdsVertexBuffer,
+                componentsPerAttribute : 1,
+                componentDatatype : ComponentDatatype.fromTypedArray(batchIds),
+                normalize : false,
+                offsetInBytes : 0,
+                strideInBytes : 0
+            });
+        }
+
         var vertexArray = new VertexArray({
             context : context,
             attributes : attributes
@@ -540,10 +645,26 @@ define([
             });
         }
 
+        if (hasBatchIds) {
+            attributeLocations = combine(attributeLocations, {
+                a_batchId : batchIdAttributeLocation
+            });
+        }
+
+        var drawVS = vs;
+        var drawFS = fs;
+        var drawUniformMap = uniformMap;
+
+        if (hasBatchIds) {
+            drawVS = batchTableResources.getVertexShaderCallback()(vs, false);
+            drawFS = batchTableResources.getFragmentShaderCallback()(fs, false);
+            drawUniformMap = batchTableResources.getUniformMapCallback()(uniformMap);
+        }
+
         var shaderProgram = ShaderProgram.fromCache({
             context : context,
-            vertexShaderSource : vs,
-            fragmentShaderSource : fs,
+            vertexShaderSource : drawVS,
+            fragmentShaderSource : drawFS,
             attributeLocations : attributeLocations
         });
 
@@ -569,24 +690,34 @@ define([
             vertexArray : vertexArray,
             count : pointsLength,
             shaderProgram : shaderProgram,
-            uniformMap : uniformMap,
+            uniformMap : drawUniformMap,
             renderState : isTranslucent ? content._translucentRenderState : content._opaqueRenderState,
             pass : isTranslucent ? Pass.TRANSLUCENT : Pass.OPAQUE,
             owner : content
         });
 
-        content._pickId = context.createPickId({
-            primitive : content
-        });
+        var pickVS;
+        var pickFS;
+        var pickUniformMap;
 
-        var pickUniformMap = combine(uniformMap, {
-            czm_pickColor : function() {
-                return content._pickId.color;
-            }
-        });
+        if (hasBatchIds) {
+            pickVS = batchTableResources.getPickVertexShaderCallback()(vs);
+            pickFS = batchTableResources.getPickFragmentShaderCallback()(fs);
+            pickUniformMap = batchTableResources.getPickUniformMapCallback()(uniformMap);
+        } else {
+            content._pickId = context.createPickId({
+                primitive : content
+            });
 
-        var pickVS = vs;
-        var pickFS = ShaderSource.createPickFragmentShaderSource(fs, 'uniform');
+            pickUniformMap = combine(uniformMap, {
+                czm_pickColor : function() {
+                    return content._pickId.color;
+                }
+            });
+
+            pickVS = vs;
+            pickFS = ShaderSource.createPickFragmentShaderSource(fs, 'uniform');
+        }
 
         var pickShaderProgram = ShaderProgram.fromCache({
             context : context,
@@ -650,6 +781,10 @@ define([
         this._drawCommand.renderState = isTranslucent ? this._translucentRenderState : this._opaqueRenderState;
         this._drawCommand.pass = isTranslucent ? Pass.TRANSLUCENT : Pass.OPAQUE;
 
+        if (defined(this.batchTableResources)) {
+            this.batchTableResources.update(tileset, frameState);
+        }
+
         var passes = frameState.passes;
         if (passes.render) {
             frameState.addCommand(this._drawCommand);
@@ -677,6 +812,7 @@ define([
             command.shaderProgram = command.shaderProgram && command.shaderProgram.destroy();
             pickCommand.shaderProgram = pickCommand.shaderProgram && pickCommand.shaderProgram.destroy();
         }
+        this.batchTableResources = this.batchTableResources && this.batchTableResources.destroy();
         return destroyObject(this);
     };
 
