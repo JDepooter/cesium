@@ -640,7 +640,6 @@ define([
                 Matrix4.multiplyByTranslation(this._tile.computedTransform, this._quantizedVolumeOffset, this._drawCommand.modelMatrix);
             } else {
                 Matrix4.clone(this._tile.computedTransform, this._drawCommand.modelMatrix);
-
             }
             Matrix4.clone(this._drawCommand.modelMatrix, this._pickCommand.modelMatrix);
         }
